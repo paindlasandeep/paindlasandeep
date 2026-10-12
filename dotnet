@@ -1,0 +1,154 @@
+Building a .NET 8 Application in Harness CI on OpenShift
+  
+Objective:
+The objective of this POC is to validate the ability to build a .NET 8 application using Harness CI with OpenShift Container Platform (OCP) as the build infrastructure.
+
+The setup uses:
+OpenShift Sandbox Cluster
+Namespace: paisandy-dev
+Harness Delegate deployed inside OpenShift
+Kubernetes Direct Build Infrastructure
+Docker Hub / Microsoft Container Registry public image (mcr.microsoft.com/dotnet/sdk:8.0)
+OpenShift RBAC for CI build pod creation
+
+Architecture Overview:
+Harness CI
+    |
+    |
+Harness Delegate
+(OpenShift Namespace: paisandy-dev)
+    |
+    |
+Creates Build Pods
+    |
+    |
+.NET SDK Container
+(mcr.microsoft.com/dotnet/sdk:8.0)
+    |
+    |
+Build / Restore / Test / Publish
+
+Prerequisites:
+Before starting the POC, the following prerequisites were available:
+OpenShift Sandbox Cluster access
+Project/Namespace: paisandy-dev
+Harness account
+Delegate Token generated from Harness
+Access to Docker Hub/Microsoft Container Registry
+OpenShift CLI (oc) access
+
+Step 1: Deploy Harness Delegate
+A Kubernetes Delegate was deployed in the paisandy-dev namespace.
+
+Delegate Deployment yaml as below:
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    harness.io/name: kubernetes-delegate
+  name: kubernetes-delegate
+  namespace: paisandy-dev
+spec:
+  replicas: 1
+  minReadySeconds: 120
+  selector:
+    matchLabels:
+      harness.io/name: kubernetes-delegate
+  template:
+    metadata:
+      labels:
+        harness.io/name: kubernetes-delegate
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3460"
+        prometheus.io/path: "/api/metrics"
+    spec:
+      terminationGracePeriodSeconds: 3600
+      restartPolicy: Always
+      containers:
+      - image: us-docker.pkg.dev/gar-prod-setup/harness-public/harness/delegate:26.05.89101
+        imagePullPolicy: Always
+        name: delegate
+        ports:
+          - containerPort: 8080
+        envFrom:
+        - secretRef:
+            name: kubernetes-delegate-account-token
+        env:
+        - name: JAVA_OPTS
+          value: "-Xms64M"
+        - name: ACCOUNT_ID
+          value: 6G-OAYZ5RLO1HiCYOun12w
+        - name: MANAGER_HOST_AND_PORT
+          value: https://app.harness.io
+        - name: DEPLOY_MODE
+          value: KUBERNETES
+        - name: DELEGATE_NAME
+          value: kubernetes-delegate
+        - name: DELEGATE_TYPE
+          value: "KUBERNETES"
+        - name: DELEGATE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: INIT_SCRIPT
+          value: ""
+        - name: DELEGATE_DESCRIPTION
+          value: ""
+        - name: DELEGATE_TAGS
+          value: ""
+        - name: NEXT_GEN
+          value: "true"
+        - name: CLIENT_TOOLS_DOWNLOAD_DISABLED
+          value: "true"
+        - name: DELEGATE_RESOURCE_THRESHOLD
+          value: ""
+        - name: DYNAMIC_REQUEST_HANDLING
+          value: "false"
+
+Step 2: Configure OpenShift RBAC
+
+Harness CI requires permissions to create and manage build pods inside the namespace.
+
+Create Role:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: harness-ci-builder
+  namespace: paisandy-dev
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "secrets", "configmaps", "services", "events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+Create Role Binding:
+The role was mapped to the default service account.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harness-ci-builder
+  namespace: paisandy-dev
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: paisandy-dev
+roleRef:
+  kind: Role
+  name: harness-ci-builder
+  apiGroup: rbac.authorization.k8s.io
+
+Step 3: Configure Harness Kubernetes Connector
+  create a kubernetes connector with default delegate authentication 
+  
+Step 4: Configure Container Registry Connector
+To run .NET builds, a Docker registry connector was required.
+  create a docker hub connector with default authentication
+  mcr.microsoft.com/dotnet/sdk:8.0 as it is a public repo no need of authentication
+  
+Step 5: Configure Harness CI Pipeline
+A CI pipeline was created using Kubernetes Direct Infrastructure.
+created a dot net build stage>>in infrastructure select namespace and cnnector details 
+>>step configuration with dcker hub connector and sh as script and run dotnet 
